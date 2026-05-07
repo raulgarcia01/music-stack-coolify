@@ -24,7 +24,7 @@ services:
       # - 'ND_LASTFM_SECRET=${ND_LASTFM_SECRET:-}'
     volumes:
       - './data:/data'
-      - '/home/botadmin/Music:/music:ro'  # read-only — Navidrome no toca tus archivos
+      - '/home/botadmin/Music:/music:ro'
     healthcheck:
       test: [CMD, wget, '--spider', '--quiet', 'http://127.0.0.1:4533/ping']
       interval: 10s
@@ -35,12 +35,8 @@ services:
   # YT-DLP WEB UI — descargador con interfaz web
   # Repo: github.com/marcopiovanello/yt-dlp-web-ui
   # Acceso: http://TU_IP:3033
-  #
-  # Pega una URL de YouTube en el browser y descarga.
-  # Soporta canciones, playlists y monitoreo de streams.
-  #
-  # Autenticación habilitada — cambia user/pass y JWT_SECRET
-  # antes de exponer al exterior.
+  # Variables requeridas en Coolify:
+  #   YTDLP_JWT_SECRET, YTDLP_USER, YTDLP_PASS
   # ─────────────────────────────────────────────
   ytdlp-webui:
     image: marcobaobao/yt-dlp-webui:latest
@@ -49,20 +45,19 @@ services:
     ports:
       - '3033:3033'
     environment:
-      # ⚠️ Cambia este valor por una cadena aleatoria larga
-      - 'JWT_SECRET=${YTDLP_JWT_SECRET:-cambia_este_secret_por_uno_seguro}'
+      - 'JWT_SECRET=${YTDLP_JWT_SECRET}'
     volumes:
-      - '/home/botadmin/Music:/downloads'    # descarga directo a tu librería
-      - './ytdlp/config:/config'             # persiste local.db, session.dat y config.yml
-      - './ytdlp/cookies:/cookies'           # cookies de YouTube (opcional)
+      - '/home/botadmin/Music:/downloads'
     command:
       - '--auth'
       - '--user'
-      - '${YTDLP_USER:-admin}'
+      - '${YTDLP_USER}'
       - '--pass'
-      - '${YTDLP_PASS:-cambia_este_password}'
+      - '${YTDLP_PASS}'
       - '--qs'
-      - '2'                                  # máximo 2 descargas simultáneas
+      - '2'
+      - '--out'
+      - '/downloads'
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:3033']
       interval: 15s
@@ -72,8 +67,6 @@ services:
   # ─────────────────────────────────────────────
   # PICARD (WEB) — tagging de metadata
   # Acceso: http://TU_IP:8086
-  # Usa Picard para corregir artista, álbum, carátula
-  # después de descargar con yt-dlp
   # ─────────────────────────────────────────────
   picard:
     image: aandree5/picard-web:latest
@@ -82,35 +75,23 @@ services:
     ports:
       - '8086:5000'
     volumes:
-      - './picard/config:/picard-web:rw'        # configuración de Picard
-      - '/home/botadmin/Music:/music:rw'        # RW obligatorio — Picard escribe los tags
-    # NOTA: Picard y Essentia son los únicos con acceso rw a /music.
+      - './picard/config:/picard-web:rw'
+      - '/home/botadmin/Music:/music:rw'
 
   # ─────────────────────────────────────────────
   # ESSENTIA — tagging automático de géneros por IA
-  # Analiza el audio real y escribe tags GENRE y MOOD
-  # en tus archivos MP3/FLAC.
-  #
-  # ⚠️ PRIMERA VEZ: los modelos ML (~87MB) se descargan
-  #    automáticamente en ./essentia/models/
-  #
-  # Uso (siempre hacer dry-run primero):
+  # Uso:
   #   docker compose run --rm essentia --dry-run
   #   docker compose run --rm essentia
-  #
-  # Opciones útiles:
-  #   --dry-run      → solo muestra qué haría, no escribe nada
-  #   --auto         → no pide confirmación por archivo
-  #   --force        → reprocesa archivos que ya tienen género
   # ─────────────────────────────────────────────
   essentia:
     build:
       context: ./essentia
       dockerfile: Dockerfile
     container_name: essentia
-    restart: 'no'                               # se ejecuta manualmente
+    restart: 'no'
     volumes:
-      - '/home/botadmin/Music:/music:rw'        # RW — escribe tags de género/mood
-      - './essentia/models:/app/models'         # modelos ML persistentes (~87MB)
+      - '/home/botadmin/Music:/music:rw'
+      - './essentia/models:/app/models'
     working_dir: /app
     command: ['python', 'tag_music.py', '/music', '--auto']
