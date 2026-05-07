@@ -7,24 +7,27 @@ services:
     image: ghcr.io/navidrome/navidrome:latest
     container_name: navidrome
     restart: unless-stopped
-    ports:
-      - '4533:4533'
     environment:
       - SERVICE_URL_NAVIDROME_4533
-      - 'ND_BASEURL=${SERVICE_URL_NAVIDROME:-}'
-      - 'ND_SCANSCHEDULE=${ND_SCANSCHEDULE:-1h}'
-      - 'ND_LOGLEVEL=${ND_LOGLEVEL:-info}'
-      - 'ND_SESSIONTIMEOUT=${ND_SESSIONTIMEOUT:-24h}'
-      - 'ND_ENABLEINSIGHTSCOLLECTOR=${ND_ENABLEINSIGHTSCOLLECTOR:-false}'
-      - 'ND_MUSICFOLDER=/music'
-      # Agrega cuando tengas las keys:
-      # - 'ND_SPOTIFY_ID=${ND_SPOTIFY_ID:-}'
-      # - 'ND_SPOTIFY_SECRET=${ND_SPOTIFY_SECRET:-}'
-      # - 'ND_LASTFM_APIKEY=${ND_LASTFM_APIKEY:-}'
-      # - 'ND_LASTFM_SECRET=${ND_LASTFM_SECRET:-}'
+      - ND_BASEURL=${SERVICE_FQDN_NAVIDROME}
+      - ND_SCANSCHEDULE=${ND_SCANSCHEDULE:-1h}
+      - ND_LOGLEVEL=${ND_LOGLEVEL:-info}
+      - ND_SESSIONTIMEOUT=${ND_SESSIONTIMEOUT:-24h}
+      - ND_ENABLEINSIGHTSCOLLECTOR=${ND_ENABLEINSIGHTSCOLLECTOR:-false}
+      - ND_MUSICFOLDER=/music
+      # - ND_SPOTIFY_ID=${ND_SPOTIFY_ID:-}
+      # - ND_SPOTIFY_SECRET=${ND_SPOTIFY_SECRET:-}
+      # - ND_LASTFM_APIKEY=${ND_LASTFM_APIKEY:-}
+      # - ND_LASTFM_SECRET=${ND_LASTFM_SECRET:-}
     volumes:
-      - './data:/data'
-      - '/home/botadmin/Music:/music:ro'
+      - type: bind
+        source: ./data
+        target: /data
+        is_directory: true
+      - type: bind
+        source: /home/botadmin/Music
+        target: /music
+        read_only: true
     healthcheck:
       test: [CMD, wget, '--spider', '--quiet', 'http://127.0.0.1:4533/ping']
       interval: 10s
@@ -33,31 +36,48 @@ services:
 
   # ─────────────────────────────────────────────
   # YT-DLP WEB UI — descargador con interfaz web
-  # Repo: github.com/marcopiovanello/yt-dlp-web-ui
-  # Acceso: http://TU_IP:3033
-  # Variables requeridas en Coolify:
-  #   YTDLP_JWT_SECRET, YTDLP_USER, YTDLP_PASS
+  # Acceso via dominio asignado por Coolify
+  # El config.yml se crea automáticamente por Coolify
+  # usando el atributo content: (no necesita archivo externo)
   # ─────────────────────────────────────────────
   ytdlp-webui:
     image: marcobaobao/yt-dlp-webui:latest
     container_name: ytdlp-webui
     restart: unless-stopped
-    ports:
-      - '3033:3033'
     environment:
-      - 'JWT_SECRET=${YTDLP_JWT_SECRET}'
+      - SERVICE_URL_YTDLP-WEBUI_3033
+      # Requeridas — Coolify bloquea el deploy si están vacías
+      - JWT_SECRET=${YTDLP_JWT_SECRET:?JWT_SECRET es requerido}
     volumes:
-      - '/home/botadmin/Music:/downloads'
-    command:
-      - '--auth'
-      - '--user'
-      - '${YTDLP_USER}'
-      - '--pass'
-      - '${YTDLP_PASS}'
-      - '--qs'
-      - '2'
-      - '--out'
-      - '/downloads'
+      - type: bind
+        source: /home/botadmin/Music
+        target: /downloads
+      # Coolify crea este archivo automáticamente con el contenido definido en content:
+      # No necesitas crear el archivo manualmente ni montarlo desde el host
+      - type: bind
+        source: ./ytdlp/config.yml
+        target: /config/config.yml
+        content: |
+          downloadsDir: /downloads
+          queueSize: 2
+          require_auth: true
+          username: ${YTDLP_USER:?YTDLP_USER es requerido}
+          password: ${YTDLP_PASS:?YTDLP_PASS es requerido}
+          ytdlp:
+            args:
+              - "--format"
+              - "bestaudio/best"
+              - "--extract-audio"
+              - "--audio-format"
+              - "mp3"
+              - "--audio-quality"
+              - "0"
+              - "--embed-thumbnail"
+              - "--embed-metadata"
+              - "--add-metadata"
+              - "--no-overwrites"
+              - "--output"
+              - "/downloads/%(uploader)s/%(title)s.%(ext)s"
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:3033']
       interval: 15s
@@ -66,21 +86,25 @@ services:
 
   # ─────────────────────────────────────────────
   # PICARD (WEB) — tagging de metadata
-  # Acceso: http://TU_IP:8086
   # ─────────────────────────────────────────────
   picard:
     image: aandree5/picard-web:latest
     container_name: picard
     restart: unless-stopped
-    ports:
-      - '8086:5000'
+    environment:
+      - SERVICE_URL_PICARD_5000
     volumes:
-      - './picard/config:/picard-web:rw'
-      - '/home/botadmin/Music:/music:rw'
+      - type: bind
+        source: ./picard/config
+        target: /picard-web
+        is_directory: true
+      - type: bind
+        source: /home/botadmin/Music
+        target: /music
 
   # ─────────────────────────────────────────────
   # ESSENTIA — tagging automático de géneros por IA
-  # Uso:
+  # Servicio one-shot — ejecutar manualmente:
   #   docker compose run --rm essentia --dry-run
   #   docker compose run --rm essentia
   # ─────────────────────────────────────────────
@@ -90,8 +114,14 @@ services:
       dockerfile: Dockerfile
     container_name: essentia
     restart: 'no'
+    exclude_from_hc: true
     volumes:
-      - '/home/botadmin/Music:/music:rw'
-      - './essentia/models:/app/models'
+      - type: bind
+        source: /home/botadmin/Music
+        target: /music
+      - type: bind
+        source: ./essentia/models
+        target: /app/models
+        is_directory: true
     working_dir: /app
     command: ['python', 'tag_music.py', '/music', '--auto']
