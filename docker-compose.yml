@@ -1,0 +1,116 @@
+services:
+
+  # ─────────────────────────────────────────────
+  # NAVIDROME — servidor de música
+  # ─────────────────────────────────────────────
+  navidrome:
+    image: ghcr.io/navidrome/navidrome:latest
+    container_name: navidrome
+    restart: unless-stopped
+    ports:
+      - '4533:4533'
+    environment:
+      - SERVICE_URL_NAVIDROME_4533
+      - 'ND_BASEURL=${SERVICE_URL_NAVIDROME:-}'
+      - 'ND_SCANSCHEDULE=${ND_SCANSCHEDULE:-1h}'
+      - 'ND_LOGLEVEL=${ND_LOGLEVEL:-info}'
+      - 'ND_SESSIONTIMEOUT=${ND_SESSIONTIMEOUT:-24h}'
+      - 'ND_ENABLEINSIGHTSCOLLECTOR=${ND_ENABLEINSIGHTSCOLLECTOR:-false}'
+      - 'ND_MUSICFOLDER=/music'
+      # Agrega cuando tengas las keys:
+      # - 'ND_SPOTIFY_ID=${ND_SPOTIFY_ID:-}'
+      # - 'ND_SPOTIFY_SECRET=${ND_SPOTIFY_SECRET:-}'
+      # - 'ND_LASTFM_APIKEY=${ND_LASTFM_APIKEY:-}'
+      # - 'ND_LASTFM_SECRET=${ND_LASTFM_SECRET:-}'
+    volumes:
+      - './data:/data'
+      - '/home/botadmin/Music:/music:ro'  # read-only — Navidrome no toca tus archivos
+    healthcheck:
+      test: [CMD, wget, '--spider', '--quiet', 'http://127.0.0.1:4533/ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────────
+  # YT-DLP WEB UI — descargador con interfaz web
+  # Repo: github.com/marcopiovanello/yt-dlp-web-ui
+  # Acceso: http://TU_IP:3033
+  #
+  # Pega una URL de YouTube en el browser y descarga.
+  # Soporta canciones, playlists y monitoreo de streams.
+  #
+  # Autenticación habilitada — cambia user/pass y JWT_SECRET
+  # antes de exponer al exterior.
+  # ─────────────────────────────────────────────
+  ytdlp-webui:
+    image: marcobaobao/yt-dlp-webui:latest
+    container_name: ytdlp-webui
+    restart: unless-stopped
+    ports:
+      - '3033:3033'
+    environment:
+      # ⚠️ Cambia este valor por una cadena aleatoria larga
+      - 'JWT_SECRET=${YTDLP_JWT_SECRET:-cambia_este_secret_por_uno_seguro}'
+    volumes:
+      - '/home/botadmin/Music:/downloads'    # descarga directo a tu librería
+      - './ytdlp/config:/config'             # persiste local.db, session.dat y config.yml
+      - './ytdlp/cookies:/cookies'           # cookies de YouTube (opcional)
+    command:
+      - '--auth'
+      - '--user'
+      - '${YTDLP_USER:-admin}'
+      - '--pass'
+      - '${YTDLP_PASS:-cambia_este_password}'
+      - '--qs'
+      - '2'                                  # máximo 2 descargas simultáneas
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3033']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  # ─────────────────────────────────────────────
+  # PICARD (WEB) — tagging de metadata
+  # Acceso: http://TU_IP:8086
+  # Usa Picard para corregir artista, álbum, carátula
+  # después de descargar con yt-dlp
+  # ─────────────────────────────────────────────
+  picard:
+    image: aandree5/picard-web:latest
+    container_name: picard
+    restart: unless-stopped
+    ports:
+      - '8086:5000'
+    volumes:
+      - './picard/config:/picard-web:rw'        # configuración de Picard
+      - '/home/botadmin/Music:/music:rw'        # RW obligatorio — Picard escribe los tags
+    # NOTA: Picard y Essentia son los únicos con acceso rw a /music.
+
+  # ─────────────────────────────────────────────
+  # ESSENTIA — tagging automático de géneros por IA
+  # Analiza el audio real y escribe tags GENRE y MOOD
+  # en tus archivos MP3/FLAC.
+  #
+  # ⚠️ PRIMERA VEZ: los modelos ML (~87MB) se descargan
+  #    automáticamente en ./essentia/models/
+  #
+  # Uso (siempre hacer dry-run primero):
+  #   docker compose run --rm essentia --dry-run
+  #   docker compose run --rm essentia
+  #
+  # Opciones útiles:
+  #   --dry-run      → solo muestra qué haría, no escribe nada
+  #   --auto         → no pide confirmación por archivo
+  #   --force        → reprocesa archivos que ya tienen género
+  # ─────────────────────────────────────────────
+  essentia:
+    build:
+      context: ./essentia
+      dockerfile: Dockerfile
+    container_name: essentia
+    restart: 'no'                               # se ejecuta manualmente
+    volumes:
+      - '/home/botadmin/Music:/music:rw'        # RW — escribe tags de género/mood
+      - './essentia/models:/app/models'         # modelos ML persistentes (~87MB)
+    working_dir: /app
+    command: ['python', 'tag_music.py', '/music', '--auto']

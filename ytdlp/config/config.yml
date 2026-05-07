@@ -1,0 +1,27 @@
+# yt-dlp-web-ui — config.yml
+# Este archivo va en ./ytdlp/config/config.yml
+# Sobreescribe los argumentos pasados por CLI al contenedor.
+# Documentación: https://github.com/marcopiovanello/yt-dlp-web-ui
+
+# Carpeta de descarga dentro del contenedor
+downloadPath: /downloads
+
+# Número máximo de descargas simultáneas
+queueSize: 2
+
+# Formato de salida — MP3 a máxima calidad con metadata y thumbnail
+# Equivale a: yt-dlp --format bestaudio/best --extract-audio --audio-format mp3 ...
+ytdlpArgs:
+  - "--format"
+  - "bestaudio/best"
+  - "--extract-audio"
+  - "--audio-format"
+  - "mp3"
+  - "--audio-quality"
+  - "0"
+  - "--embed-thumbnail"
+  - "--embed-metadata"
+  - "--add-metadata"
+  - "--no-overwrites"
+  - "--output"
+  - "/downloads/%(uploader)s/%(title)s.%(ext)s"
